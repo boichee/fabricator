@@ -14,9 +14,9 @@ First, you'll need to install fabricator. It's been tested to be compatible with
 
 #### First, install `fabricator`
 
-**Install with `pip`** (Not yet available!)
+**Install with `pip`**
 
-`pip install fabricator`
+`pip install fabricate-it`
 
 **or, just clone it into your project**
 

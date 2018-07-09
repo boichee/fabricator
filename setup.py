@@ -17,8 +17,8 @@ test_reqs = ['pytest', 'hypothesis', 'requests_mock']
 setup_reqs = ['flake8', 'pep8', 'pytest-runner']
 
 setup(
-    name='fabricator',
-    version='1.0.0',
+    name='fabricate-it',
+    version='1.0.1',
     author='Brett Levenson',
     author_email='blevenson@apple.com',
     description='A library that makes creating API clients simple and declarative',
