@@ -277,7 +277,7 @@ g = client.group(name='v1', prefix='/api/v1')
 g.add_header('X-CUSTOM-HEADER', 'custom_value')
 ```
 
-## Collisions
+### Collisions
 
 In general, you can name your endpoints almost anything, but there are a few reserved words, and these are some of the words that you use to control Fabricator:
 
@@ -291,7 +291,7 @@ In general, you can name your endpoints almost anything, but there are a few res
 Because all of these are methods in Fabricator itself, using them is going to cause problems for you. So, you know, don't do it. 
 
 
-## Advanced Usage
+### Advanced Usage
 
 Suppose you want to register an endpoint that works the same way with both the `PUT` and `PATCH` methods. `Fabricator` has a way to save some time:
 
@@ -321,3 +321,22 @@ client.update.put(id=1, value='Important thing to remember')
 ```
 
 In fact, you can always call the execution methods explicitly if you want. But if you're only assigning 1 HTTP method to an endpoint method, there's no need.
+
+
+### Running Tests
+
+Fabricator uses `py.test`. To run the test-suite, do the following:
+
+Make sure all dependencies are installed
+
+```bash
+pip install -r requirements.txt
+```
+
+Then run the tests
+
+```bash
+py.test
+```
+
+That's it.
