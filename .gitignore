@@ -1,0 +1,10 @@
+.idea
+venv
+.DS_Store
+*.pyc
+__pycache__
+.env
+.hypothesis
+.pytest_cache
+*.egg-info
+.eggs
