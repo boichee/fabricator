@@ -4,7 +4,7 @@ Have an API? Make a client.
 
 ### What is it?
 
-`fabricator` provides a simple, declarative interface for creating clients for APIs. With a little magic (AKA metaprogramming), you can create an API client in just a few lines of code.
+`fabricator` provides a fast, declarative-ish interface for creating clients for APIs. Create clients for ReST APIs in just a few lines of code.
 
 ### I don't believe you, show me...
 
@@ -14,7 +14,7 @@ First, you'll need to install fabricator. It's been tested to be compatible with
 
 #### First, install `fabricator`
 
-**Install with `pip`**
+**Install with `pip` (Recommended)**
 
 `pip install fabricate-it`
 
@@ -25,6 +25,18 @@ First, you'll need to install fabricator. It's been tested to be compatible with
 #### Now, use `fabricator`
 
 In this example, we'll create a client that works with an imaginary "Todo" API (I know, boring example...)
+Imagine we have a "Todo API" (I know, boring example) that looks like this:
+
+```
+GET     /__health
+GET     /api/v1/todos/
+GET     /api/v1/todos/:id
+POST    /api/v1/todos/
+PUT     /api/v1/todos/:id
+DELETE  /api/v1/todos/:id
+```
+
+You can create a client for all of these endpoints like this:
 
 ```python
 from fabricator import Fabricator
@@ -34,7 +46,7 @@ def MyTodoAPI():
     client = Fabricator(base_url='https://todos.com')
     
     # Now, you start adding your endpoints
-    client.get(name='healthCheck', path='/__health')
+    client.get(name='health', path='/__health')
     
     # Endpoints for the To-Do resource
     # Note: You don't have to create a group, but its a nice feature that saves some typing and 
@@ -55,6 +67,34 @@ def MyTodoAPI():
     return client
 ```
 
+Actually, since this CRUD structure is so common in ReSTful APIs, there's a shortcut
+method to create APIs that have this topology - `.standard()`:
+
+```python
+from fabricator import Fabricator
+
+def MyTodoAPI():
+    # Establish a client instance using the Fabricator class
+    client = Fabricator(base_url='https://todos.com')
+    
+    # Now, you start adding your endpoints
+    client.get(name='health', path='/__health')
+    
+    # Create the group
+    todos = client.group(name='todos', prefix='/api/v1/todos')
+
+    # Now create all the endpoints in one go
+    # Note when using this shortcut the endpoints will have the names:
+    # all, get, create, overwrite, update, delete
+    todos.standard(with_param='id')
+    
+    # .start() locks the Client and prepares it for use.
+    client.start()
+    
+    # And return it, of course
+    return client
+```
+
 Ok, that's great. But how do I use that? Glad you asked...
 
 ```python
@@ -62,7 +102,7 @@ from fabricator.exc import *
 client = MyTodoAPI()
 
 # Let's try doing a health check with our new API
-resp = client.healthCheck() # The `resp` object is a standard requests.Response instance
+resp = client.health() # The `resp` object is a standard requests.Response instance
 print("Status code was: %s" % resp.status_code)
 
 # Ok, now something more complicated, let's create 5 todos
@@ -101,14 +141,14 @@ if status_code is not 204:
 
 ```
 
-Now you should say, "Wow!"
+Wow, right?
 
 
 ### Response Handlers
 
-You may not want to work directly with the `requests.Response` object when you make a call. Maybe you want to do some handling for the end user?
+You may not want callers to have access to, or to work directly with, the `requests.Response` object when a call is made. Maybe you want to do some response handling?
 
-#### What's a response handler?
+#### Use a response handler
 
 A response handler is just a function with the signature `Callable[[request.Response], Any]`
 
@@ -122,18 +162,17 @@ from fabricator import Fabricator, handler_json_decode
 client = Fabricator(base_url='https://todos.com', handler=handler_json_decode)
 ```
 
-This handler is super simple and is just provided for convenience. It does 3 things:
+This `handler_json_decode` handler is super simple and is just provided for convenience. It does 3 things:
 
   1. It checks the result of each request, and makes sure the status code was in the 200 or 300 range. If it's not, an `FabricatorRequestError` or `FabricatorRequestAuthError` is raised (if auth was the problem).
-  2. If the request was successful, it will try to decode the body of the request under the assumption it contains `json` data. If that works, it returns a list, or dict, or whatever the JSON container. If it doesn't work, it falls back to returning the raw body as a string. 
+  2. If the request was successful, it will try to decode the body of the request under the assumption it contains `json` data. If that works, it will parse the JSON into python objects. If it doesn't work, it falls back to returning the raw body as a string. 
   3. As long as no request error occurred, it returns a tuple with the form `(response_body, response_status_code)`.
 
 I mention this because it's likely that your API will have some unique differences or you might want your client to return things in a different form.
 
-
 #### Writing your own response handler
 
-You can see an example of a custom response handler in `examples/examples.py`. Here's the gist:
+You can see an example of a custom response handler that effectively creates DAO's. It's in `examples/examples.py`. Here's the gist:
 
 ```python
 # A response handler will receive the `requests.Response` instance that comes back from the HTTP request. It's up to you what to do with it.
@@ -158,7 +197,8 @@ def handler_todo_response(resp):
 from fabricator import Fabricator
 client = Fabricator(base_url='https://todos.com', handler=handler_todo_response)
 
-# Oh, one more awesome thing, you can set handlers at any level, so you could also just use this handler in a group, or even in just one endpoint:
+# You can set response handlers at any level. So they can be applied to a group, or just
+# a single endpoint, if desired.
 
 todos = client.group(name='todos', prefix='/api/v1/todos', handler=handler_todo_response)
 
@@ -205,7 +245,7 @@ You can set a `handler` after you instantiate the client with `set_handler`:
 status_code_handler = lambda r: r.status_code
 
 client = Fabricator(...)
-client.set_handler(status_code_handler)
+client.set_handler(handler=status_code_handler)
 ```
 
 
@@ -245,7 +285,6 @@ client = Fabricator(...)
 client.post(name='login', path='/api/v1/auth/', auth_handler=no_auth)
 ```
 
-
 #### Set 'auth_handler' after instantiation
 
 Just like with response `handler`s, you can set an auth handler at any time using the `.set_auth_handler` method.
@@ -263,33 +302,39 @@ client = Fabricator(..., headers={ 'content-type': 'application/json' })
 
 #### Can I add a header?
 
-Yes, you can add a header at any time, to either the root client, or any group within it using the `.add_header` method.
+Yes, you can add a header at any time, to either the root client, or any group using the `.add_header` method.
 
 ```python
 from fabricator import Fabricator
 
 client = Fabricator(...)
-client.add_header('X-CUSTOM_HEADER', 'custom_value')
+client.add_header(name='X-CUSTOM_HEADER', value='custom_value')
 
 
 # Or you can add to a group the same way
 g = client.group(name='v1', prefix='/api/v1')
-g.add_header('X-CUSTOM-HEADER', 'custom_value')
+g.add_header(name='X-CUSTOM-HEADER', name='custom_value')
 ```
 
 ### Collisions
 
-In general, you can name your endpoints almost anything, but there are a few reserved words, and these are some of the words that you use to control Fabricator:
+As of Fabricator 1.1.0, naming collisions are no longer a problem thanks to some additional magic. You can now name your endpoints whatever you'd like.
 
-- `register`
-- `add_header`
-- `set_handler`
-- `set_auth_handler`
-- `group`
-- `start`
+As a result, however, it's become more important that you always use keyword parameters when calling the builder functions. This means:
 
-Because all of these are methods in Fabricator itself, using them is going to cause problems for you. So, you know, don't do it. 
+```python
 
+# BAD. Don't do this.
+client.get('one', path='/:id')
+client.add_header('X-IP', '127.0.0.1')
+
+# GOOD. Do this instead
+client.get(name='one', path='/:id')
+client.add_header(name='X-IP', value='127.0.0.1')
+
+```
+
+Failing to use keyword arguments when building clients with Fabricator can lead to unexpected behavior—**particularly if you mix and match keyword arguments and positional arguments**.
 
 ### Advanced Usage
 

@@ -105,7 +105,7 @@ def test_group_can_have_registered_endpoints(client, group, m):
 
 def test_headers_shared_from_endpoint_parent(client: Fabricator, m: requests_mock.Mocker):
     # Add a header to the top level client
-    client.add_header('X-CUSTOM', '1')
+    client.add_header(name='X-CUSTOM', value='1')
 
     # Now add an endpoint
     client.get(name='health', path='/__health')
@@ -124,7 +124,7 @@ def test_headers_shared_from_endpoint_parent(client: Fabricator, m: requests_moc
 
 def test_headers_sent_from_endpoint(client: Fabricator, m: requests_mock.Mocker):
     # Add an endpoint with a header
-    client.get('health', path='/__health', headers={ 'X-CUSTOM': '1' })
+    client.get(name='health', path='/__health', headers={ 'X-CUSTOM': '1' })
     client.start()
 
     # Mock it
@@ -140,7 +140,7 @@ def test_headers_sent_from_endpoint(client: Fabricator, m: requests_mock.Mocker)
 
 def test_direct_registration_with_multiple_methods(client: Fabricator, m: requests_mock.Mocker):
     # Add an endpoint using "register"
-    client.register('update', path='/todos/:id', methods=['PUT', 'PATCH'])
+    client.register(name='update', path='/todos/:id', methods=['PUT', 'PATCH'])
     client.start()
 
     # Mock it
@@ -163,10 +163,10 @@ def test_response_handler(client: Fabricator, m: requests_mock.Mocker):
     def custom_handler(resp):
         return resp.text, resp.status_code
 
-    client.set_handler(custom_handler)
+    client.set_handler(handler=custom_handler)
 
     # Register an endpoint
-    client.get('health', path='/__health')
+    client.get(name='health', path='/__health')
     client.start()
 
     # Mock the request
@@ -177,8 +177,15 @@ def test_response_handler(client: Fabricator, m: requests_mock.Mocker):
     assert text == 'OK'
     assert code is 200
 
+def test_collision_management(client: Fabricator, m: requests_mock.Mocker):
+    # Register an endpoint that has the same name as one of the built ins
+    client.get(name='register', path='/__health')
+    client.start()
 
+    # Mock the request
+    m.get(HEALTH_TEST_URL, text='OK')
 
-
-
-
+    # Call the endpoint
+    resp = client.register()
+    assert resp.status_code is 200
+    assert resp.text == 'OK'

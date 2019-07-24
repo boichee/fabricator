@@ -19,6 +19,53 @@ elif six.PY3:
     import enum
 
 
+# Utilities
+def extract_parameters(kwargs, names, remove=False):
+    """
+    In a few cases, because of the dual modes of Fabricator, we need to allow
+    any set of parameters to be passed into a method in one mode, while requiring
+    parameters in another. This makes dealing with that situation a bit easier.
+
+    TODO(blevenson): This has one downside - None is used as the initializer, 
+    which will make it impossible to set the value of one of the parameters to
+    None intentionally. Need to think about how to handle this situation.
+    """
+    out = [None] * len(names)
+    for i, n in enumerate(names):
+        if n in kwargs:
+            out[i] = kwargs[n]
+            if remove:
+                del kwargs[n]
+
+    return tuple(out)
+
+def destructure_dict(d, *args, default=None):
+    return tuple(d.get(a, default) for a in args)
+
+
+def check_valid_methods(methods):
+    for i, m in enumerate(methods):
+        # Skip check if already an instance of HTTPMethods
+        if isinstance(m, HTTPMethods):
+            continue
+
+        try:
+            m = HTTPMethods(m)
+            methods[i] = m
+        except ValueError as exc:
+            raise_from(FabricatorNotImplementedError('method "{}" is not valid'.format(m)), exc)
+
+def add_if_set(kw, **kwargs):
+    for n, v in kwargs.items():
+        if v is not None:
+            kw[n] = v
+    return kw
+
+def check_required_params(missing_values=(None,), **kwargs):
+    for n, v in kwargs.items():
+        if v in missing_values:
+            raise ValueError('missing required keyword parameter "{}"'.format(n))
+
 # Custom Exceptions and Error Types
 quote_and_escape = lambda s: "'{}'".format(s.replace("'", r"\'")) if s is not None else 'None'
 
@@ -121,8 +168,8 @@ def make_auth_handler(f):
 class FabricatorEndpoint:
     def __init__(self,
                  parent,
-                 name,
-                 path,
+                 name=None,
+                 path=None,
                  handler=None,
                  methods=None,
                  auth_handler=None,
@@ -131,6 +178,8 @@ class FabricatorEndpoint:
         """
         This creates a "Route" (really a known operation) within the Fabricator where it lives.
         """
+        check_required_params(name=name, path=path)
+
         self.parent = parent
         self.name = name
         self.path = path
@@ -294,6 +343,26 @@ class Fabricator:
         self._endpoints = {}
         self._started = False
 
+    def __getattr_builder(self, name):
+        """
+        Looks up the correct attribute in "builder" mode. That is, finds the 
+        correct HTTP method and returns a proxy to the register method.
+        """
+        if name.upper() not in HTTPMethods.all():
+            all_methods = ', '.join(HTTPMethods.all()).lower()
+            raise FabricatorUsageError('Endpoint registrations use the methods "{}"'.format(all_methods))
+
+        return functools.partial(self.register, methods=[HTTPMethods(name.upper())])
+    
+    def __getattr_started(self, name):
+        """
+        Once the Fabricator client has been started, this looks up the correct
+        endpoint in the map and returns that FabricatorEndpoint instance.
+        """
+        if name not in self._endpoints:
+            raise FabricatorNotImplementedError('There is no method with the name "{}"'.format(name))
+
+        return self._endpoints[name]
 
     def __getattr__(self, name):
         """
@@ -301,54 +370,105 @@ class Fabricator:
         a) Finds the appropriate route based on the name of the attribute
         b) If the attr is the name of a HTTP Method, it will call register with that method
         """
-        if self._is_started() is False:
-            # Check to make sure the attr name is one of the allowed HTTP methods
-            if name.upper() not in HTTPMethods.all():
-                all_methods = ', '.join(HTTPMethods.all()).lower()
-                raise FabricatorUsageError('Endpoint registrations use the methods "{}"'.format(all_methods))
+        if self._is_started():
+            return self.__getattr_started(name)
+        return self.__getattr_builder(name)
 
-            return functools.partial(self.register, methods=[HTTPMethods(name.upper())])
+    def add_header(self, **kwargs):
+        """
+        Adds a header to this Fabricator instance. Once added, header will be
+        applied to all calls made to endpoints attached to this instance.
+        Parameters:
+        name (str): Header name
+        value (str): Header value
+        """
+        if self._is_started():
+            # If already started, assumes there is some endpoint called add_header
+            return self.__getattr_started('add_header')(**kwargs)
 
-        # Fabricator client has been started, so try to get the requested method from the routes
-        if name not in self._endpoints:
-            raise FabricatorNotImplementedError('There is no method with the name "{}"'.format(name))
+        if 'name' in kwargs:
+            d = { kwargs['name']: kwargs['value'] }
+        else:
+            d = kwargs
 
-        return self._endpoints[name]
-
-    def add_header(self, name, value):
         if self._headers is None:
-            self._headers = { name: value }
-            return
+            self._headers = d
+        else:
+            self._headers.update(d)
+        
+        return self
 
-        self._headers.update({name: value})
+    def set_handler(self, *args, **kwargs):
+        if self._is_started():
+            return self.__getattr_started('set_handler')(**kwargs)
 
-    def set_handler(self, h):
-        self._default_handler = h
+        if 'handler' in kwargs:
+            handler = kwargs['handler']
+        else:
+            handler = args[0]
 
-    def set_auth_handler(self, h):
-        self._auth_handler = h
+        self._default_handler = handler
 
-    def group(self,
-              name,
-              prefix,
-              auth_handler=None,
-              headers=None,
-              handler=None):
-        """Creates a new instance of this class so it can behave as a "subgroup" of the larger instance"""
+    def set_auth_handler(self, *args, **kwargs):
+        if self._is_started():
+            return self.__getattr_started('set_auth_handler')(**kwargs)
+
+        if 'handler' in kwargs:
+            handler = kwargs['handler']
+        else:
+            handler = args[0]
+        
+        self._auth_handler = handler
+
+    def group(self, **kwargs):
+        """
+        Creates a new instance of this class so it can behave as a "subgroup" of the larger instance
+        Parameters:
+        name (str): The name of the group. Will become a method in the eventual client
+        prefix (str): The path prefix this group represents in the API
+        handler (Callable): Responses will be processed by this handler
+        auth_handler (Callable): Requests will be pre-processed by this handler
+        headers (Dict): Headers to add to all requests in this group
+        """
+        if self._is_started():
+            return self.__getattr_started('group')(**kwargs)
+
         # Create the new Fabricator instance with self as the parent
-        g = Fabricator(parent=self, base_url=prefix, auth_handler=auth_handler, headers=headers, handler=handler)
-
-        # Add it to the routing table
-        self._endpoints[name] = g
+        name, prefix = destructure_dict(kwargs, 'name', 'prefix')
+        del kwargs['name']
+        if prefix is not None:
+            # In 'group' we call the 'base_url' a 'prefix'. Translate before calling.
+            kwargs['base_url'] = prefix
+            del kwargs['prefix']
+        self._endpoints[name] = Fabricator(parent=self, **kwargs)
 
         # Return it to the caller so they can use it
-        return g
+        return self._endpoints[name]
 
-    def start(self):
+    def start(self, **kwargs):
         """
         Freezes the Fabricator so no more routes can be added
         """
-        self._started = True
+        # Since "start" is a reasonable name for an endpoint, check to make
+        # sure we haven't already been started before continuing. If start() has
+        # already been called, then this was intended to be an endpoint call
+        if self._is_started():
+            return self.__getattr_started('start')(**kwargs)
+        
+        # Not yet started, so do so. If this is called on a group, rather than
+        # a parent, the root will be found so the entire client is started as
+        # well.
+        self._find_root()._started = True
+    
+    def _find_root(self):
+        """
+        If the current instance is a child group, work up to the root and then
+        return the root instance
+        """
+        current = self
+        while current._parent:
+            current = current._parent
+        return current
 
     def _is_started(self):
         # Work up through the tree, checking to see if the Fabricator is marked as "ready"
@@ -360,40 +480,65 @@ class Fabricator:
 
         return False
 
+    def standard(self, with_param=None, **kwargs):
+        """
+        Many ReST APIs follow the form:
+        GET /       all
+        GET /:id    get
+        POST /      create
+        PUT /:id    overwrite
+        PATCH /:id  update
+        DELETE /:id delete
 
-    def register(self,
-                 name,
-                 path,
-                 handler=None,
-                 methods=None,
-                 auth_handler=None,
-                 headers=None,
-                 required_params=()):
+        This method will create all of these routes in a single operation, giving
+        them the names listed on the right side of the table
+        """
+        if self._is_started():
+            # Fabricator client has been started, so pass off control
+            kwargs = add_if_set(kwargs, with_param=with_param)
+            return self.__getattr_started('standard')(**kwargs)
+
+        # Create the All and Create methods
+        self.register(name='all', path='/', methods=['GET'], **kwargs)
+        self.register(name='create', path='/', methods=['POST'], **kwargs)
+
+        # If with_param was set, use it to create the rest of the methods
+        if with_param:
+            path = '/:{}'.format(with_param)
+            self.register(name='get', path=path, methods=['GET'])
+            self.register(name='overwrite', path=path, methods=['PUT'])
+            self.register(name='update', path=path, methods=['PATCH'])
+            self.register(name='delete', path=path, methods=['DELETE'])
+
+    def register(self, **kwargs):
         """
         Registers a new route into the Fabricator
-        """
-        # Check that the provided methods are valid
-        for i, m in enumerate(methods):
-            # Skip check if already an instance of HTTPMethods
-            if isinstance(m, HTTPMethods):
-                continue
 
-            try:
-                m = HTTPMethods(m)
-                methods[i] = m
-            except ValueError as exc:
-                raise_from(FabricatorNotImplementedError('method {} is not valid'.format(m)), exc)
+        Parameters:
+        name (str): The name of the route
+        path (str): The path
+        methods (List[str]): The methods that should be registered under this endpoint
+        handler (Callable): A handler that should be applied to the response
+        auth_handler (Callable): A handler that should be applied to the request to handle authentication
+        headers (Dict): Headers that should be added to the request
+        required_params (List[str]): A list of parameters that must be present when this endpoint is called 
+        """
+        # Check for started
+        if self._is_started():
+            return self.__getattr_started('register')(**kwargs)
+        
+        name, path, methods = destructure_dict(kwargs, 'name', 'path', 'methods')
+        
+        # Check that the provided methods are valid
+        check_valid_methods(methods)
 
         if not path.startswith('/'):
             path = '/' + path
 
         # Now register the route to the name
-        self._endpoints[name] = FabricatorEndpoint(parent=self,
-                                                   name=name,
-                                                   path=path,
-                                                   handler=handler,
-                                                   methods=methods,
-                                                   auth_handler=auth_handler,
-                                                   headers=headers,
-                                                   required_params=required_params)
+        self._endpoints[name] = \
+            FabricatorEndpoint(parent=self, **kwargs)
+        
+        # Return self to allow calls to be chained
+        return self
 
