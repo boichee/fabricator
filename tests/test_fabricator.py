@@ -56,7 +56,7 @@ def test_calling_post_endpoint(client, m):
     assert resp.status_code is 200
 
     # Now check the history
-    assert m.last_request.json() == { 'value': 'TEST VALUE' }
+    assert m.last_request.json() == {'value': 'TEST VALUE'}
 
 
 def test_required_params_are_checked(client, m):
@@ -189,3 +189,26 @@ def test_collision_management(client: Fabricator, m: requests_mock.Mocker):
     resp = client.register()
     assert resp.status_code is 200
     assert resp.text == 'OK'
+
+
+# TODO(blevenson): Need to add a test to test the new "standard" method
+def test_standard_api(client: Fabricator, m: requests_mock.Mocker):
+    client.standard(with_param='id')
+    client.start()
+
+    # Mock request
+    m.get(BASE_URL + '/', text='OK')
+    m.post(BASE_URL + '/', status_code=201)
+    m.get(BASE_URL + '/1', text='OK')
+    m.put(BASE_URL + '/1', status_code=202)
+    m.patch(BASE_URL + '/1', status_code=202)
+    m.delete(BASE_URL + '/1', status_code=204)
+
+    # Call the endpoints
+    assert client.all().status_code == 200
+    get = client.get(id=1)
+    assert get.status_code == 200 and get.text == 'OK'
+    assert client.create(name='user').status_code == 201
+    assert client.overwrite(id=1, name='user').status_code == 202
+    assert client.update(id=1, name='user').status_code == 202
+    assert client.delete(id=1).status_code == 204
