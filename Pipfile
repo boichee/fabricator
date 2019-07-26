@@ -4,6 +4,9 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 
 [dev-packages]
+setuptools = "*"
+wheel = "*"
+twine = "*"
 
 [packages]
 aenum = "==2.1.2"

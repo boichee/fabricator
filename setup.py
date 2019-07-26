@@ -18,7 +18,7 @@ setup_reqs = ['flake8', 'pep8', 'pytest-runner']
 
 setup(
     name='fabricate-it',
-    version='1.0.1',
+    version='1.1.0',
     author='Brett Levenson',
     author_email='blevenson@apple.com',
     description='A library that makes creating API clients simple and declarative',
